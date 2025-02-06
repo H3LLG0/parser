@@ -14,7 +14,7 @@ async function getProductLinks(NumberOfPage) {
         categoryPage('.catalog-card')
         .find('.catalog-card__link')
         .each((index, element) => {
-            const productURL = 'https://www.muztorg.ru/' + categoryPage(element).attr("href") + '?view_tab=characteristics';
+            const productURL = 'https://www.muztorg.ru/' + categoryPage(element).attr("href");
             productLinks.push(productURL)
        })
     }
