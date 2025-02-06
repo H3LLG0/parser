@@ -1,54 +1,76 @@
-const puppeteer = require('puppeteer');
+const cheerio = require("cheerio");
+const axios = require("axios");
 const fs = require('fs');
-const csv = require('csv-stringify');
 const url = 'https://www.muztorg.ru/category/elektrogitary';
 
-(async () => {
-    console.log('парсинг начался (ждать придется долго :/)')
-    let start = performance.now();
-    const browser = await puppeteer.launch({headless:false});
-    const page = await browser.newPage();
-    await page.goto(url);
-    let Number_of_pages = 10; //можно распарсить все страницы, но это долго очень
-    // await page.evaluate(() => {
-    //     let number = document.querySelector('._last > a').innerText;
-    //     return number;
-    // })
-    for(let i=1; i<=Number_of_pages; i++) {
-        await page.goto(url+`?page=${i}`)
-        let ArrayLinks = await page.evaluate(() => {
-            let link = Array.from(document.querySelectorAll('.catalog-card__name'), el => el.href);
-            return link;
+async function getProductLinks(NumberOfPage) {
+    const productLinks =[];
+    for(let i=1; i<=NumberOfPage; i++) {
+        const axiosCategoryPage = await axios.request({
+            method: "GET",
+            url: url+`?page=${i}`,
         })
-        let products__array = Array(ArrayLinks.length);
-        for(let j = 0; j<ArrayLinks.length; j++) {
-            await page.goto(ArrayLinks[j]);
-            let product = await page.evaluate(()=> {
-                let characteristics = Array.from(document.querySelectorAll('.mt-product-info__list > div > span'), el => el.innerText)
-                let product_data = {
-                    naming: document.querySelector('.title-1').innerText,
-                    img: document.querySelector('.mt-product-gallery__image > img').src,
-                    frets: characteristics[0],
-                    strings: characteristics[1],
-                    picups: characteristics[2],
-                    neckMount: characteristics[3],
-                    guitarNeck: characteristics[4],
-                    deck: characteristics[5],
-                }
-                return product_data;
-            })
-            products__array[j] = product;
-        }
-        const dataCSV = products__array.reduce((acc, product) => {
-            acc += `${product.naming}, ${product.img}, ${product.frets}, ${product.strings}, ${product.picups}, ${product.neckMount}, ${product.guitarNeck}, ${product.deck},\n`;
-            return acc;
-          }, 
-        );
-        fs.appendFileSync('parse-result.csv', dataCSV, 'utf-8')
+        const categoryPage = cheerio.load(axiosCategoryPage.data);
+        categoryPage('.catalog-card')
+        .find('.catalog-card__link')
+        .each((index, element) => {
+            const productURL = 'https://www.muztorg.ru/' + categoryPage(element).attr("href") + '?view_tab=characteristics';
+            productLinks.push(productURL)
+       })
     }
-    browser.close();
-    let end = performance.now();
-    let time = end - start;
-    console.log('Время парсинга = ' + time) + 'мс';
+    return productLinks;
+}
 
+async function getProductCharacteristicTitle() {
+    const titles = ['URL', 'наименование', 'цена', 'изображение'];
+    const axiosProductPage = await axios.request({
+        method: "GET",
+        url: 'https://www.muztorg.ru/produ%D1%81t/A121655?view_tab=characteristics',
+    })
+    const productPage = cheerio.load(axiosProductPage.data);
+    productPage('.mt-product-characteristics__title')
+        .find('div')
+        .each((index, element) => {
+            titles.push(productPage(element).text().replaceAll('\n', '').trim())
+        })
+        const filteredArray = titles.filter(function(el) {
+            return el != '';
+          });
+    return filteredArray;
+}
+
+async function getProductCharacteristics(productLinks) {
+    const title = await getProductCharacteristicTitle()
+    const product = [];
+    product.push(title)
+    for(let i=0; i<productLinks.length; i++) {
+        const axiosProductPage = await axios.request({
+            method: "GET",
+            url: productLinks[i],
+        })
+        const productPage = cheerio.load(axiosProductPage.data);
+        const productInfo = [
+            productLinks[i],
+            productPage('.mt-product-head__column').find('.title-1').text(),
+            productPage('.product-header-price__default-value').text(),
+            productPage('.mt-product-gallery__thumbnail').find('img').attr('src'),
+        ]
+        productPage('.mt-product-characteristics__item')
+        .find('.mt-product-characteristics__value')
+        .each((index, element) => {
+            productInfo.push(productPage(element).text().replaceAll('\n', '').trim())
+        })
+        product.push(productInfo);
+    }
+    return product;
+}
+
+(async () => {
+    const NumberOfPage = 1;
+    const productLinks = await getProductLinks(NumberOfPage);
+    const productsArray = await getProductCharacteristics(productLinks)
+    const productCSV = productsArray
+        .map(product => product.join(', '))
+        .join('\n')
+    fs.appendFileSync('parse-result.csv', productCSV, 'utf-8')
 })()
